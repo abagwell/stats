@@ -1,0 +1,144 @@
+#!/bin/bash
+#####################################################################
+#Name: Andrew Bagwell
+#Assignment: Program 1
+#Filename: stats
+#Date: 4/13/16
+####################################################################
+
+# set up the usage function that will display a string and redirect stdout to stderr
+
+usage() {
+	echo "Usage: $0 {-rows|-cols} [file]" 1>&2 
+}
+
+#Cleanup is performed here when the program exits certain signals caused by ctrl-c and others are transmitted	
+	exit_on_signal() {
+		echo "Script terminated." 2>&1
+		rm -f *.tmp
+		exit 0
+	} 
+
+	cleanup() {
+		rm -f *.tmp
+		exit 0
+	}
+	
+	trap exit_on_signal SIGHUP SIGINT SIGTERM 
+	trap cleanup EXIT
+
+#check for the right number of arguments: #there should be at least 1 argument and not more than two. If this isn't the case, call the usage function and exit the program with the appropriate return value
+
+	if [[ ( "$#" >  2 )  || ( "$#" < 1 ) ]];then
+		usage 
+		exit 1
+	fi 
+
+#check whether data is passed as a file or std input
+	if [ "$#" = "1" ]; then
+		cat > startFile.$$.tmp
+		fileName=startFile.$$.tmp
+	else
+		fileName="$2"
+
+	#check if the input file is readable
+
+		if [ !  -r $fileName ];then
+			echo "$0: $fileName is not readable!" 1>&2
+			exit 1
+		fi
+	fi
+
+#---Calculations Portion-----
+#----------------------------
+#
+
+#FOR OPTION 1 -rows 
+
+#### First, it sorts each line by changing every row into a column and calling 'sort', then it transforms the '\n' into blank spaces thereby reprodcing a sorted row.
+
+#### Next it counts the words (numbers in each row). 
+
+####To calculate the sum of a row, it gets the line and replaces the whitespace or tabs with + and then calls the binary calculator on that line to produce the sum. 
+
+####The true average is calculated by dividing the sum by the count using the bc to produce the average in decimal form.
+
+#### To produce the rounded average, we add .5 to the average and then divide by 1 with the bc, this produces an average rounded to the nearest integer BUT it still contains a decimal point. To remove the decimal point, we call sed to strip the decimal point, and everything following it, off the value to produce an integer.  
+
+#### To calculate the median, we need to get the middle column in the row. The middle column is calculated by dividing count by 2 and then adding 1 using the expr. The expr command works with integers and any floating point statistics are truncated. By adding 1, we account both the possibility of an even or odd amount of numbers (for even numbers, we take the higher value of the two, this works because the column is sorted). The median itself is calculated by cutting the value at middle from the sorted line that uses " " as a delimiter
+
+####credit to alecjacobsen.com/weblog/?p=256 for the cool rounding technique/hack
+
+#FOR OPTION 2 -columns
+
+#### the file is read line by line until each column is read
+
+#### The amount of columns is counted and stored in a variable via the head command and wc command. Also, a variable that is used to track the column number is initialized to one. This is used as a tracker when looping through a file.
+
+####To read the file, a while loop is created that will execute until the column iterator is greater than the column count. The value in the appropriate column is taken and added to a running total while a count of the numbers added is kept as well. The average and rounded average are calculated using the same techniques as the "row" option, printed, the column iterator is incremented, and the running total and count are reset. When all the columns have been touched, the while loop ends.
+
+####To calculate the median, an identical while loop is created. A nested while loop is then created to read the file and the values at the appropriate columns are taken and written to a temporary file(1). Once every line has been read at the appropriate column, the nested loop terminates. The temporary file(1) is read and sorted using the sort command and then written to a second temporary file(2). That temporary file(2) is then read from and the paste command is used to transpose the single column into a row where it is then written to the third temporary file(3). This file is then read using the head command to get the top row. The numbers are counted using the wc command. The middle value and median are calculated in the same manner is in the row option. The median is then printed. This continues until all the columsn have been read and the loop exits
+
+	if [[ $1 = -r* ]]; then
+		printf "Average\tMedian\n"
+		while read line
+		do 
+			sorted_line=$(echo $line | tr ' ' '\n' | sort -g | tr '\n' ' ')
+			count=$(echo $line | wc -w)
+			sum=$(echo $line | tr ' ' '+' | bc) 
+			average=$(echo "scale=1; $sum / $count" | bc)
+			roundedAvg=$(echo "($average + .5) / 1" | bc | sed 's/[.].*//') 
+			middle=$( expr  $count / 2 + 1 )
+			median=$(echo $sorted_line | cut -d" " -f $middle)
+			printf "%s\t%s\n" "$roundedAvg" "$median"
+		done < "$fileName"
+	elif [[ $1 = -c* ]]; then 
+		printf "Averages:\n "
+		column_iterator=1
+		column_count=$(head -n 1 $fileName | wc -w)
+		sumVals=0
+		valCount=0
+		while [[ "$column_iterator"  -le "$column_count" ]]
+		do 
+			while read line 
+			do
+				val=$(echo $line | cut -d" " -f $column_iterator) 
+				sumVals=$( expr $sumVals + $val )
+				valCount=$( expr $valCount + 1 )
+			done < "$fileName"
+			average=$(echo "scale=1; $sumVals / $valCount" | bc)
+                        roundedAvg=$(echo "($average + .5) / 1" | bc | sed 's/[.].*//')
+			printf "%s\t" "$roundedAvg" 
+			column_iterator=$(expr $column_iterator + 1)
+			sumVals=0
+			valCount=0
+		done 
+		printf "\n"
+		#median is calculated here...
+		column_iterator=1
+		echo "Medians:     "
+		while [[ "$column_iterator" -le "$column_count" ]]  
+		do
+			while read line
+			do
+                                echo $line | cut -d" " -f $column_iterator >> temp_file.$$.tmp
+			done < "$fileName"
+			cat temp_file.$$.tmp | sort -g > temp2_file.$$.tmp
+			paste -s temp2_file.$$.tmp  > temp3_file.$$.tmp
+			head=$(head temp3_file.$$.tmp)
+			count=$(echo $head | wc -w)
+			middle=$( expr  $count / 2 + 1 )
+                        median=$(echo $head | cut -d" " -f $middle)
+			printf "%s\t" "$median" 
+			column_iterator=$(expr $column_iterator + 1)
+			> temp_file.$$.tmp
+			> temp2_file.$$.tmp
+			> temp3_file.$$.tmp
+		done
+		printf "\n"
+	else 
+		usage
+		exit 1
+	fi 
+
+ 
